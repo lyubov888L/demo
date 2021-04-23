@@ -1,0 +1,227 @@
+# Этот скрипт предназначен для перебора всех зависимостей в GHE, GitLab или
+# Проект Azure DevOps, создание PR при необходимости.
+
+требуется  "dependsabot / file_fetchers"
+требовать  "dependsabot / file_parsers"
+требуется  "зависимость / update_checkers"
+требуется  "зависимость / обновление файлов"
+требуется  "зависимость / pull_request_creator"
+требуется  "зависимость / омнибус"
+требуется  "gitlab"
+
+учетные данные  =  [
+  {
+    "type"  =>  "git_source" ,
+    "host"  =>  "github.com" ,
+    "username"  =>  "x-access-token" ,
+    "password"  =>  ENV [ "GITHUB_ACCESS_TOKEN" ]  # Токен доступа GitHub с доступом на чтение к общедоступным репозиториям
+  }
+]
+
+# Полное имя репо, для которого вы хотите создать запросы на вытягивание.
+repo_name  =  ENV [ "PROJECT_PATH" ]  # пространство имен / проект
+
+# Каталог, в котором находятся базовые файлы зависимостей.
+directory  =  ENV [ "DIRECTORY_PATH" ] || "/"
+
+# Ветка для просмотра. По умолчанию ветка репо по умолчанию
+branch  =  ENV [ "ФИЛИАЛ" ]
+
+# Имя менеджера пакетов, для которого вы хотите выполнить обновление. Варианты:
+# - сборщик
+# - pip (включает pipenv)
+# - npm_and_yarn
+# - maven
+# - градиент
+# - груз
+# - шестнадцатеричный
+# - композитор
+# - nuget
+# - деп
+# - go_modules
+# - вяз
+# - подмодули
+# - докер
+# - терраформа
+package_manager  =  ENV [ "PACKAGE_MANAGER" ] || "упаковщик"
+
+если  ENV [ "GITHUB_ENTERPRISE_ACCESS_TOKEN" ]
+  учетные данные << {
+    "type"  =>  "git_source" ,
+    "host"  =>  ENV [ "GITHUB_ENTERPRISE_HOSTNAME" ] ,  # Например, "ghe.mydomain.com",
+    "username"  =>  "x-access-token" ,
+    "password"  =>  ENV [ "GITHUB_ENTERPRISE_ACCESS_TOKEN" ]  # Токен доступа GHE с разрешением API
+  }
+
+  источник  =  Dependabot :: Source . новый (
+    провайдер : "github" ,
+    имя хоста : ENV [ "GITHUB_ENTERPRISE_HOSTNAME" ] ,
+    api_endpoint : "https: // # { ENV [ 'GITHUB_ENTERPRISE_HOSTNAME' ] } / api / v3 /" ,
+    репо : repo_name ,
+    каталог : каталог ,
+    филиал : филиал ,
+  )
+elsif  ENV [ "GITLAB_ACCESS_TOKEN" ]
+  gitlab_hostname  =  ENV [ "GITLAB_HOSTNAME" ] || "gitlab.com"
+
+  учетные данные << {
+    "type"  =>  "git_source" ,
+    "host"  =>  gitlab_hostname ,
+    "username"  =>  "x-access-token" ,
+    "password"  =>  ENV [ "GITLAB_ACCESS_TOKEN" ]  # Токен доступа GitLab с разрешением API
+  }
+
+  источник  =  Dependabot :: Source . новый (
+    провайдер : "gitlab" ,
+    имя хоста : gitlab_hostname ,
+    api_endpoint : "https: // # { gitlab_hostname } / api / v4" ,
+    репо : repo_name ,
+    каталог : каталог ,
+    филиал : филиал ,
+  )
+elsif  ENV [ "AZURE_ACCESS_TOKEN" ]
+  azure_hostname  =  ENV [ "AZURE_HOSTNAME" ] || "dev.azure.com"
+
+  учетные данные << {
+    "type"  =>  "git_source" ,
+    "host"  =>  azure_hostname ,
+    "username"  =>  "x-access-token" ,
+    "пароль"  =>  ENV [ "AZURE_ACCESS_TOKEN" ]
+  }
+
+  источник  =  Dependabot :: Source . новый (
+    провайдер : "лазурный" ,
+    имя хоста : azure_hostname ,
+    api_endpoint : "https: // # { azure_hostname } /" ,
+    репо : repo_name ,
+    каталог : каталог ,
+    филиал : филиал ,
+  )
+elsif  ENV [ "BITBUCKET_ACCESS_TOKEN" ]
+  bitbucket_hostname  =  ENV [ "BITBUCKET_HOSTNAME" ] || "bitbucket.org"
+
+  учетные данные << {
+    "type"  =>  "git_source" ,
+    "host"  =>  bitbucket_hostname ,
+    "username"  =>  ноль ,
+    "токен"  =>  ENV [ "BITBUCKET_ACCESS_TOKEN" ]
+  }
+
+  источник  =  Dependabot :: Source . новый (
+    провайдер : "битбакет" ,
+    имя хоста : bitbucket_hostname ,
+    api_endpoint : ENV [ "BITBUCKET_API_URL" ] || "https://api.bitbucket.org/2.0/" ,
+    репо : repo_name ,
+    каталог : каталог ,
+    ветка : ноль ,
+  )
+еще
+  источник  =  Dependabot :: Source . новый (
+    провайдер : "github" ,
+    репо : repo_name ,
+    каталог : каталог ,
+    филиал : филиал ,
+  )
+конец
+
+#############################
+# Получить файлы зависимостей #
+#############################
+путы  "Извлечение # { package_manager } файлы зависимостей для # { repo_name } "
+fetcher  =  Dependabot :: FileFetchers . for_package_manager ( package_manager ) . новый (
+  источник : источник ,
+  учетные данные : учетные данные ,
+)
+
+файлы  =  сборщик . файлы
+совершить  =  сборщик . совершить
+
+#############################
+# Разбираем файлы зависимостей #
+#############################
+помещает  "Анализ зависимостей информации"
+парсер  =  Dependabot :: FileParsers . for_package_manager ( package_manager ) . новый (
+  dependency_files : файлы ,
+  источник : источник ,
+  учетные данные : учетные данные ,
+)
+
+зависимости  =  парсер . разбирать
+
+зависимости . выберите ( & : top_level? ) . каждый  делать | деп |
+  #################################################################################
+  # Получить сведения об обновлении для зависимости #
+  #################################################################################
+  checker  =  Dependabot :: UpdateCheckers . for_package_manager ( package_manager ) . новый (
+    зависимость : деп ,
+    dependency_files : файлы ,
+    учетные данные : учетные данные ,
+  )
+
+  следующий,  если  проверка . до настоящего времени?
+
+  requirements_to_unlock  =
+    если ! шашка . requirements_unlocked_or_can_be?
+      если  шашка . can_update? ( requirements_to_unlock :: none )  затем  : none
+      еще  : update_not_possible
+      конец
+    elsif  checker . can_update? ( requirements_to_unlock :: own )  затем  : own
+    elsif  checker . can_update? ( requirements_to_unlock :: all )  затем  : all
+    еще  : update_not_possible
+    конец
+
+  следующий,  если  requirements_to_unlock == : update_not_possible
+
+  updated_deps  =  чекер . updated_dependencies (
+    requirements_to_unlock : requirements_to_unlock
+  )
+
+  ###################################
+  # Создание обновленных файлов зависимостей #
+  ###################################
+  печать  "- Обновление # { отд . имя } (из # { DEP . версия } ) ..."
+  updater  =  Dependabot :: FileUpdaters . for_package_manager ( package_manager ) . новый (
+    зависимости : updated_deps ,
+    dependency_files : файлы ,
+    учетные данные : учетные данные ,
+  )
+
+  updated_files  =  средство обновления . updated_dependency_files
+
+  ###############################################################################
+  # Создаем пул-реквест для обновления #
+  ###############################################################################
+  assignee  =  ( ENV [ "PULL_REQUESTS_ASSIGNEE" ] || ENV [ "GITLAB_ASSIGNEE_ID" ] ) &. to_i
+  assignees  =  правопреемник ? [ правопреемник ] : правопреемник
+  pr_creator  =  Dependabot :: PullRequestCreator . новый (
+    источник : источник ,
+    base_commit : совершить ,
+    зависимости : updated_deps ,
+    файлы : updated_files ,
+    учетные данные : учетные данные ,
+    правопреемники : правопреемники ,
+    author_details : {  имя : "Dependabot" ,  электронная почта : "no-reply@github.com"  } ,
+    label_language : true ,
+  )
+  pull_request  =  pr_creator . Создайте
+  ставит  "отправлено"
+
+  следующий,  если не  pull_request
+
+  # Включить функцию GitLab «слияние при успешном выполнении конвейера».
+  # Созданные и успешно протестированные запросы на слияние будут объединены автоматически.
+  если  ENV [ "GITLAB_AUTO_MERGE" ]
+    g  =  Gitlab . клиент (
+      конечная точка : источник . api_endpoint ,
+      private_token : ENV [ "GITLAB_ACCESS_TOKEN" ]
+    )
+    г . accept_merge_request (
+      источник . репо ,
+      pull_request . iid ,
+      merge_when_pipeline_succeeds : true ,
+      should_remove_source_branch : правда
+    )
+  конец
+конец
+
+ставит  "Готово"
